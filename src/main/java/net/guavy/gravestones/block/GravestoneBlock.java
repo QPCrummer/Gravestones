@@ -6,6 +6,7 @@ import net.guavy.gravestones.block.entity.GravestoneBlockEntity;
 import net.guavy.gravestones.config.GravestoneDropType;
 import net.guavy.gravestones.config.GravestoneRetrievalType;
 import net.guavy.gravestones.config.GravestonesConfig;
+import net.guavy.gravestones.mixin.CombinedInventoryAccessor;
 import net.minecraft.block.*;
 import net.minecraft.block.entity.BlockEntity;
 import net.minecraft.entity.Entity;
@@ -30,7 +31,6 @@ import net.minecraft.world.BlockView;
 import net.minecraft.world.World;
 import org.jetbrains.annotations.Nullable;
 
-import java.util.ArrayList;
 import java.util.List;
 
 public class GravestoneBlock extends HorizontalFacingBlock implements BlockEntityProvider {
@@ -88,16 +88,21 @@ public class GravestoneBlock extends HorizontalFacingBlock implements BlockEntit
 
         BlockEntity be = world.getBlockEntity(pos);
 
-        if(!(be instanceof GravestoneBlockEntity)) return;
-        GravestoneBlockEntity blockEntity = (GravestoneBlockEntity) be;
+        if(!(be instanceof GravestoneBlockEntity blockEntity)) return;
 
         blockEntity.markDirty();
 
         if(blockEntity.getItems() == null) return;
 
-        ItemScatterer.spawn(world, pos, blockEntity.getItems());
+        DefaultedList<ItemStack> allItems = DefaultedList.of();
 
-        blockEntity.setItems(DefaultedList.copyOf(ItemStack.EMPTY));
+        for (DefaultedList<ItemStack> stacks : blockEntity.getItems()) {
+            allItems.addAll(stacks);
+        }
+
+        ItemScatterer.spawn(world, pos, allItems);
+
+        blockEntity.setItems(DefaultedList.copyOf(ItemStack.EMPTY), DefaultedList.copyOf(ItemStack.EMPTY), DefaultedList.copyOf(ItemStack.EMPTY), DefaultedList.copyOf(ItemStack.EMPTY));
     }
 
     public boolean RetrieveGrave(PlayerEntity playerEntity, World world, BlockPos pos) {
@@ -105,8 +110,7 @@ public class GravestoneBlock extends HorizontalFacingBlock implements BlockEntit
 
         BlockEntity be = world.getBlockEntity(pos);
 
-        if(!(be instanceof GravestoneBlockEntity)) return false;
-        GravestoneBlockEntity blockEntity = (GravestoneBlockEntity) be;
+        if(!(be instanceof GravestoneBlockEntity blockEntity)) return false;
 
         blockEntity.markDirty();
 
@@ -119,78 +123,63 @@ public class GravestoneBlock extends HorizontalFacingBlock implements BlockEntit
             }
         }
 
-        DefaultedList<ItemStack> items = blockEntity.getItems();
+        DefaultedList<ItemStack> inventoryItems = blockEntity.getItems()[0];
+        DefaultedList<ItemStack> armorItems = blockEntity.getItems()[1];
+        DefaultedList<ItemStack> offHandItems = blockEntity.getItems()[2];
+        DefaultedList<ItemStack> apiItems = blockEntity.getItems()[3];
 
-        DefaultedList<ItemStack> retrievalInventory = DefaultedList.of();
-
-        retrievalInventory.addAll(playerEntity.getInventory().main);
-        retrievalInventory.addAll(playerEntity.getInventory().armor);
-        retrievalInventory.addAll(playerEntity.getInventory().offHand);
-
-        for (GravestonesApi gravestonesApi : Gravestones.apiMods) {
-            retrievalInventory.addAll(gravestonesApi.getInventory(playerEntity));
-        }
-
-        playerEntity.getInventory().clear();
+        dropAllBelow(playerEntity);
 
         if(GravestonesConfig.getConfig().mainSettings.dropType == GravestoneDropType.PUT_IN_INVENTORY) {
-            List<ItemStack> armor = items.subList(36, 40);
-
-            for (ItemStack itemStack : armor) {
+            // Equip armor
+            for (ItemStack itemStack : armorItems) {
                 EquipmentSlot equipmentSlot = MobEntity.getPreferredEquipmentSlot(itemStack);
 
                 playerEntity.equipStack(equipmentSlot, itemStack);
             }
 
-            playerEntity.equipStack(EquipmentSlot.OFFHAND, items.get(40));
-
-            List<ItemStack> mainInventory = items.subList(0, 36);
-
-            for (int i = 0; i < mainInventory.size(); i++) {
-                playerEntity.getInventory().insertStack(i, mainInventory.get(i));
+            // Equip offhand
+            if (!offHandItems.isEmpty()) {
+                playerEntity.equipStack(EquipmentSlot.OFFHAND, offHandItems.get(0));
             }
 
-            DefaultedList<ItemStack> extraItems = DefaultedList.of();
-
-            List<Integer> openArmorSlots = getInventoryOpenSlots(playerEntity.getInventory().armor);
-
-            for(int i = 0; i < 4; i++) {
-                if(openArmorSlots.contains(i)) {
-                    playerEntity.equipStack(EquipmentSlot.fromTypeIndex(EquipmentSlot.Type.ARMOR, i), retrievalInventory.subList(36, 40).get(i));
+            // Main Inventory
+            boolean dropRemaining = false;
+            int index = 0;
+            for (ItemStack stack : inventoryItems) {
+                int slot = playerEntity.getInventory().getEmptySlot();
+                if (slot != -1) {
+                    playerEntity.getInventory().insertStack(slot, stack);
+                    index++;
+                } else {
+                    dropRemaining = true;
+                    break;
                 }
-                else
-                    extraItems.add(retrievalInventory.subList(36, 40).get(i));
             }
 
-            if(playerEntity.getInventory().offHand.get(0) == ItemStack.EMPTY)
-                playerEntity.equipStack(EquipmentSlot.OFFHAND, retrievalInventory.get(40));
-            else
-                extraItems.add(retrievalInventory.get(40));
-
-            extraItems.addAll(retrievalInventory.subList(0, 36));
-            if (retrievalInventory.size() > 41)
-                extraItems.addAll(retrievalInventory.subList(41, retrievalInventory.size()));
-
-            List<Integer> openSlots = getInventoryOpenSlots(playerEntity.getInventory().main);
-
-            for(int i = 0; i < openSlots.size(); i++) {
-                playerEntity.getInventory().insertStack(openSlots.get(i), extraItems.get(i));
-            }
-
-            DefaultedList<ItemStack> dropItems = DefaultedList.of();
-            dropItems.addAll(extraItems.subList(openSlots.size(), extraItems.size()));
-
-            int inventoryOffset = 41;
-
+            // Handle API
+            int apiIndex = 0;
             for (GravestonesApi gravestonesApi : Gravestones.apiMods) {
-                gravestonesApi.setInventory(items.subList(inventoryOffset, inventoryOffset + gravestonesApi.getInventorySize(playerEntity)), playerEntity);
-                inventoryOffset += gravestonesApi.getInventorySize(playerEntity);
+                gravestonesApi.setInventory(apiItems.subList(apiIndex, apiIndex + gravestonesApi.getInventorySize(playerEntity)), playerEntity);
+                apiIndex += gravestonesApi.getInventorySize(playerEntity);
             }
 
-            ItemScatterer.spawn(world, pos, dropItems);
+            if (dropRemaining) {
+                DefaultedList<ItemStack> remaining = DefaultedList.of();
+                for (int i = index; i < inventoryItems.size(); i++) {
+                    remaining.add(inventoryItems.get(i));
+                }
+                ItemScatterer.spawn(world, pos, remaining);
+            }
         }
         else if (GravestonesConfig.getConfig().mainSettings.dropType == GravestoneDropType.DROP_ITEMS) {
-            ItemScatterer.spawn(world, pos, blockEntity.getItems());
+            DefaultedList<ItemStack> allItems = DefaultedList.of();
+
+            for (DefaultedList<ItemStack> stacks : blockEntity.getItems()) {
+                allItems.addAll(stacks);
+            }
+
+            ItemScatterer.spawn(world, pos, allItems);
         }
 
         playerEntity.addExperience((int) (GravestonesConfig.getConfig().mainSettings.xpPercentage * blockEntity.getXp()));
@@ -200,27 +189,27 @@ public class GravestoneBlock extends HorizontalFacingBlock implements BlockEntit
         return true;
     }
 
-    private List<Integer> getInventoryOpenSlots(DefaultedList<ItemStack> inventory) {
-        List<Integer> openSlots = new ArrayList<>();
-
-        for (int i = 0; i < inventory.size(); i++) {
-            if(inventory.get(i) == ItemStack.EMPTY)
-                openSlots.add(i);
+    public void dropAllBelow(PlayerEntity player) {
+        for(List<ItemStack> list : ((CombinedInventoryAccessor)player.getInventory()).getCombinedInventory()) {
+            for(int i = 0; i < list.size(); ++i) {
+                ItemStack itemStack = list.get(i);
+                if (!itemStack.isEmpty()) {
+                    player.dropItem(itemStack, false, false);
+                    list.set(i, ItemStack.EMPTY);
+                }
+            }
         }
 
-        return openSlots;
     }
 
     @Override
     public void onPlaced(World world, BlockPos pos, BlockState state, LivingEntity placer, ItemStack itemStack) {
         BlockEntity blockEntity = world.getBlockEntity(pos);
 
-        if(!(blockEntity instanceof GravestoneBlockEntity) || !itemStack.hasCustomName()) {
+        if(!(blockEntity instanceof GravestoneBlockEntity gravestoneBlockEntity) || !itemStack.hasCustomName()) {
             super.onPlaced(world, pos, state, placer, itemStack);
             return;
         }
-
-        GravestoneBlockEntity gravestoneBlockEntity = (GravestoneBlockEntity) blockEntity;
 
         gravestoneBlockEntity.setCustomName(itemStack.getOrCreateSubNbt("display").getString("Name"));
     }

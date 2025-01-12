@@ -5,6 +5,8 @@ import com.mojang.authlib.GameProfile;
 import net.guavy.gravestones.Gravestones;
 import net.minecraft.block.BlockState;
 import net.minecraft.block.entity.BlockEntity;
+import net.minecraft.entity.EquipmentSlot;
+import net.minecraft.entity.mob.MobEntity;
 import net.minecraft.inventory.Inventories;
 
 import net.minecraft.item.ItemStack;
@@ -20,6 +22,9 @@ import org.jetbrains.annotations.Nullable;
 public class GravestoneBlockEntity extends BlockEntity {
     // implements BlockEntityClientSerializable {
     private DefaultedList<ItemStack> items;
+    private DefaultedList<ItemStack> armorItems;
+    private DefaultedList<ItemStack> offHandItem;
+    private DefaultedList<ItemStack> apiItems;
     private int xp;
     private GameProfile graveOwner;
     private String customName;
@@ -33,13 +38,16 @@ public class GravestoneBlockEntity extends BlockEntity {
         this.items = DefaultedList.ofSize(41, ItemStack.EMPTY);
     }
 
-    public void setItems(DefaultedList<ItemStack> items) {
+    public void setItems(DefaultedList<ItemStack> items, DefaultedList<ItemStack> armorItems, DefaultedList<ItemStack> offHandItem, DefaultedList<ItemStack> apiItems) {
         this.items = items;
+        this.armorItems = armorItems;
+        this.offHandItem = offHandItem;
+        this.apiItems = apiItems;
         this.markDirty();
     }
 
-    public DefaultedList<ItemStack> getItems() {
-        return items;
+    public DefaultedList<ItemStack>[] getItems() {
+        return new DefaultedList[]{items, armorItems, offHandItem, apiItems};
     }
 
     public void setGraveOwner(GameProfile gameProfile) {
@@ -73,9 +81,62 @@ public class GravestoneBlockEntity extends BlockEntity {
     public void readNbt(NbtCompound tag) {
         super.readNbt(tag);
 
-        this.items = DefaultedList.ofSize(tag.getInt("ItemCount"), ItemStack.EMPTY);
+        if (tag.contains("ItemCount")) {
+            // Commence the great migration
+            Inventories.readNbt(tag.getCompound("Items"), this.items);
+            this.armorItems = DefaultedList.ofSize(4);
+            this.offHandItem = DefaultedList.ofSize(1); // We aren't handling this
+            this.apiItems = DefaultedList.of(); // We aren't handling this
 
-        Inventories.readNbt(tag.getCompound("Items"), this.items);
+            int filledLevel = 0;
+            for (ItemStack itemStack : this.items) {
+                if (filledLevel == 4) {
+                    break;
+                }
+                EquipmentSlot equipmentSlot = MobEntity.getPreferredEquipmentSlot(itemStack);
+                switch (equipmentSlot) {
+                    case FEET -> {
+                        if (this.armorItems.get(3).isEmpty()) {
+                            this.armorItems.add(3, itemStack);
+                            this.items.remove(itemStack);
+                            filledLevel++;
+                        }
+                    }
+                    case LEGS -> {
+                        if (this.armorItems.get(2).isEmpty()) {
+                            this.armorItems.add(2, itemStack);
+                            this.items.remove(itemStack);
+                            filledLevel++;
+                        }
+                    }
+                    case CHEST -> {
+                        if (this.armorItems.get(1).isEmpty()) {
+                            this.armorItems.add(1, itemStack);
+                            this.items.remove(itemStack);
+                            filledLevel++;
+                        }
+                    }
+                    case HEAD -> {
+                        if (this.armorItems.get(0).isEmpty()) {
+                            this.armorItems.add(0, itemStack);
+                            this.items.remove(itemStack);
+                            filledLevel++;
+                        }
+                    }
+                    default -> {}
+                }
+            }
+        } else {
+            this.items = DefaultedList.ofSize(tag.getInt("InventoryItemCount"), ItemStack.EMPTY);
+            this.armorItems = DefaultedList.ofSize(tag.getInt("ArmorItemCount"), ItemStack.EMPTY);
+            this.offHandItem = DefaultedList.ofSize(tag.getInt("OffHandItemCount"), ItemStack.EMPTY);
+            this.apiItems = DefaultedList.ofSize(tag.getInt("APIItemCount"), ItemStack.EMPTY);
+
+            Inventories.readNbt(tag.getCompound("InventoryItems"), this.items);
+            Inventories.readNbt(tag.getCompound("ArmorItems"), this.armorItems);
+            Inventories.readNbt(tag.getCompound("OffHandItems"), this.offHandItem);
+            Inventories.readNbt(tag.getCompound("APIItems"), this.apiItems);
+        }
 
         this.xp = tag.getInt("XP");
 
@@ -90,9 +151,15 @@ public class GravestoneBlockEntity extends BlockEntity {
     public void writeNbt(NbtCompound tag) {
         super.writeNbt(tag);
 
-        tag.putInt("ItemCount", this.items.size());
+        tag.putInt("InventoryItemCount", this.items.size());
+        tag.putInt("ArmorItemCount", this.armorItems.size());
+        tag.putInt("OffHandItemCount", this.offHandItem.size());
+        tag.putInt("APIItemCount", this.apiItems.size());
 
-        tag.put("Items", Inventories.writeNbt(new NbtCompound(), this.items, true));
+        tag.put("InventoryItems", Inventories.writeNbt(new NbtCompound(), this.items, true));
+        tag.put("ArmorItems", Inventories.writeNbt(new NbtCompound(), this.armorItems, true));
+        tag.put("OffHandItems", Inventories.writeNbt(new NbtCompound(), this.offHandItem, true));
+        tag.put("APIItems", Inventories.writeNbt(new NbtCompound(), this.apiItems, true));
 
         tag.putInt("XP", xp);
 

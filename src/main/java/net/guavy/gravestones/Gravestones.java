@@ -64,8 +64,7 @@ public class Gravestones implements ModInitializer {
 					return false;
 
 				if(gravestoneBlockEntity.getGraveOwner() != null && GravestonesConfig.getConfig().mainSettings.retrievalType == GravestoneRetrievalType.ON_BREAK)
-					if(!gravestoneBlockEntity.getGraveOwner().getId().equals(player.getGameProfile().getId()) && !GravestonesConfig.getConfig().mainSettings.enableGraveLooting)
-						return false;
+                    return gravestoneBlockEntity.getGraveOwner().getId().equals(player.getGameProfile().getId()) || GravestonesConfig.getConfig().mainSettings.enableGraveLooting;
 			}
 			return true;
 		});
@@ -84,14 +83,9 @@ public class Gravestones implements ModInitializer {
 		Block block = blockState.getBlock();
 
 
-		DefaultedList<ItemStack> combinedInventory = DefaultedList.of();
-
-		combinedInventory.addAll(player.getInventory().main);
-		combinedInventory.addAll(player.getInventory().armor);
-		combinedInventory.addAll(player.getInventory().offHand);
-
+		DefaultedList<ItemStack> apiInventory = DefaultedList.of();
 		for (GravestonesApi gravestonesApi : Gravestones.apiMods) {
-			combinedInventory.addAll(gravestonesApi.getInventory(player));
+			apiInventory.addAll(gravestonesApi.getInventory(player));
 		}
 
 		boolean placed = false;
@@ -102,7 +96,7 @@ public class Gravestones implements ModInitializer {
 
 				placed = world.setBlockState(gravePos, graveState);
 				GravestoneBlockEntity gravestoneBlockEntity = new GravestoneBlockEntity(gravePos, graveState);
-				gravestoneBlockEntity.setItems(combinedInventory);
+				gravestoneBlockEntity.setItems(player.getInventory().main, player.getInventory().armor, player.getInventory().offHand, apiInventory);
 				gravestoneBlockEntity.setGraveOwner(player.getGameProfile());
 				gravestoneBlockEntity.setXp(player.totalExperience);
 				world.addBlockEntity(gravestoneBlockEntity);

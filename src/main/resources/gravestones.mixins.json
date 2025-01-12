@@ -4,6 +4,7 @@
   "package": "net.guavy.gravestones.mixin",
   "compatibilityLevel": "JAVA_16",
   "mixins": [
+    "CombinedInventoryAccessor",
     "ExplosionMixin",
     "LivingEntityMixin"
   ],
